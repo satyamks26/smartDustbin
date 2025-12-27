@@ -1,162 +1,126 @@
-import User from "../models/User.model.js";
+import mongoose from "mongoose";
 import Bin from "../models/Bin.model.js";
+import User from "../models/User.model.js";
+import { openServo, closeServo } from "../hardware/arduino.js";
 
-/*
-  This function handles:
-  - new user creation
-  - points increment
-  - bin creation
-  - returning dashboard data
-*/
-export const visitBin = async (req, res) => {
+/**
+ * GET /bin/:binId
+ * Called when QR is scanned or page is opened
+ */
+export async function visitBin(req, res) {
+    console.log("🔥 visitBin controller HIT");
+
     try {
         const { binId } = req.params;
-
-        /*
-          userId is sent from frontend.
-          First time → it will be undefined.
-        */
-        let { userId } = req.query;
+        const { userId } = req.query;
 
         let user;
 
-        // 1️⃣ If user does NOT exist → create one
-        if (!userId) {
+        if (!userId || !mongoose.Types.ObjectId.isValid(userId)) {
+            // create new user
             user = await User.create({
-                displayName: `User-${Math.random().toString(36).substring(2, 6).toUpperCase()}`
+                displayName: `User_${Math.floor(Math.random() * 10000)}`,
+                points: 5,
             });
-        }
-        // 2️⃣ If userId exists → fetch user
-        else {
+        } else {
             user = await User.findById(userId);
-
-            /*
-              Edge case:
-              userId exists in browser but user was deleted from DB
-            */
-            if (!user) {
-                user = await User.create({
-                    displayName: `User-${Math.random().toString(36).substring(2, 6).toUpperCase()}`
-                });
+            if (user) {
+                user.points += 5;
+                await user.save();
             } else {
-                // Add points on every visit
-                const now = new Date();
-                const COOLDOWN = 5 * 60 * 1000; // 5 minutes
-
-                if (!user.lastScanAt || now - user.lastScanAt > COOLDOWN) {
-                    user.points += 5;
-                    user.lastScanAt = now;
-                    await user.save();
-                }
-
+                // If ID was valid but user not found, create new
+                user = await User.create({
+                    displayName: `User_${Math.floor(Math.random() * 10000)}`,
+                    points: 5,
+                });
             }
         }
 
-        // 3️⃣ Find or create bin
         let bin = await Bin.findOne({ binId });
 
         if (!bin) {
-            bin = await Bin.create({ binId });
+            bin = await Bin.create({
+                binId,
+                status: "CLOSED",
+                level: 0,
+                lastActionAt: null,
+            });
         }
 
-        // 4️⃣ Send dashboard data
-        res.json({
-            user: {
-                id: user._id,
-                name: user.displayName,
-                points: user.points
-            },
-            bin: {
-                id: bin.binId,
-                status: bin.status,
-                level: bin.level
-            }
-        });
-
+        res.json({ user, bin });
     } catch (err) {
         console.error(err);
-        res.status(500).json({ message: "Something went wrong" });
+        res.status(500).json({ error: "Failed to load bin" });
     }
-};
+}
 
-/*
-  Open the dustbin
-*/
-export const openBin = async (req, res) => {
+/**
+ * POST /bin/:binId/open
+ * Open bin + rotate servo
+ */
+export async function openBin(req, res) {
     try {
         const { binId } = req.params;
 
-        // Find the bin
         const bin = await Bin.findOne({ binId });
-
         if (!bin) {
-            return res.status(404).json({ message: "Bin not found" });
+            return res.status(404).json({ error: "Bin not found" });
         }
 
-        const now = new Date();
-        const ACTION_COOLDOWN = 10 * 1000; // 10 seconds
-
-        // Prevent rapid open/close spam
-        if (bin.lastActionAt && now - bin.lastActionAt < ACTION_COOLDOWN) {
-            return res.status(429).json({
-                message: "Action too frequent. Please wait before trying again."
-            });
+        // Safety rule
+        if (bin.status === "OPEN") {
+            return res.json({ message: "Bin already open" });
         }
 
-        // Change bin state
+        // 🔌 HARDWARE CALL
+        console.log("🔥 Calling openServo()");
+
+        openServo();
+
         bin.status = "OPEN";
-        bin.lastActionAt = now;
-
+        bin.lastActionAt = new Date();
         await bin.save();
 
         res.json({
-            message: "Bin opened successfully",
-            status: bin.status
+            message: "Bin opened",
+            status: bin.status,
         });
-
-    } catch (error) {
-        console.error("Open bin error:", error);
-        res.status(500).json({ message: "Failed to open bin" });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Failed to open bin" });
     }
-};
+}
 
-/*
-  Close the dustbin
-*/
-export const closeBin = async (req, res) => {
+/**
+ * POST /bin/:binId/close
+ * Close bin + rotate servo
+ */
+export async function closeBin(req, res) {
     try {
         const { binId } = req.params;
 
-        // Find the bin
         const bin = await Bin.findOne({ binId });
-
         if (!bin) {
-            return res.status(404).json({ message: "Bin not found" });
+            return res.status(404).json({ error: "Bin not found" });
         }
 
-        const now = new Date();
-        const ACTION_COOLDOWN = 10 * 1000; // 10 seconds
-
-        // Prevent rapid open/close spam
-        if (bin.lastActionAt && now - bin.lastActionAt < ACTION_COOLDOWN) {
-            return res.status(429).json({
-                message: "Action too frequent. Please wait before trying again."
-            });
+        if (bin.status === "CLOSED") {
+            return res.json({ message: "Bin already closed" });
         }
 
-        // Change bin state
+        // 🔌 HARDWARE CALL
+        closeServo();
+
         bin.status = "CLOSED";
-        bin.lastActionAt = now;
-
+        bin.lastActionAt = new Date();
         await bin.save();
 
         res.json({
-            message: "Bin closed successfully",
-            status: bin.status
+            message: "Bin closed",
+            status: bin.status,
         });
-
-    } catch (error) {
-        console.error("Close bin error:", error);
-        res.status(500).json({ message: "Failed to close bin" });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Failed to close bin" });
     }
-};
+}

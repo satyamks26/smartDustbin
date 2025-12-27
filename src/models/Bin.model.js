@@ -9,26 +9,37 @@ const binSchema = new mongoose.Schema(
         binId: {
             type: String,
             required: true,
-            unique: true
+            unique: true,
         },
 
+        // Actual physical state of bin
         status: {
             type: String,
             enum: ["OPEN", "CLOSED"],
-            default: "CLOSED"
+            default: "CLOSED",
         },
 
-        level: {
-            type: Number, // 0 to 100
-            default: 0
+        // Command for ESP (what ESP should do)
+        command: {
+            type: String,
+            enum: ["OPEN", "CLOSE"],
+            default: "CLOSE",
         },
+
+        // Fill level from sensor (0–100)
+        level: {
+            type: Number,
+            default: 0,
+        },
+
+        // Last time bin was opened/closed
         lastActionAt: {
             type: Date,
-            default: null
-        }
+            default: null,
+        },
     },
     {
-        timestamps: true
+        timestamps: true,
     }
 );
 
