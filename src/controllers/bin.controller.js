@@ -1,74 +1,59 @@
 import Bin from "../models/Bin.model.js";
+import User from "../models/User.model.js";
 
-/*
-  GET /bin/:binId
-*/
-export const visitBin = async (req, res) => {
-    try {
-        const { binId } = req.params;
+export async function visitBin(req, res) {
+    const { binId } = req.params;
+    const { userId } = req.query;
 
-        let bin = await Bin.findOne({ binId });
-
-        if (!bin) {
-            bin = await Bin.create({ binId });
-        }
-
-        res.json(bin);
-    } catch (err) {
-        res.status(500).json({ error: err.message });
+    let bin = await Bin.findOne({ binId });
+    if (!bin) {
+        bin = await Bin.create({ binId });
     }
-};
 
-/*
-  POST /bin/:binId/open
-*/
-export const openBin = async (req, res) => {
-    try {
-        const { binId } = req.params;
+    let user;
 
-        const bin = await Bin.findOneAndUpdate(
-            { binId },
-            {
-                command: "OPEN",
-                status: "OPEN",
-                lastActionAt: new Date(),
-            },
-            { new: true, upsert: true }
-        );
+    if (userId) {
+        user = await User.findById(userId);
+    }
 
-        res.json({
-            ok: true,
-            command: bin.command,
+    if (!user) {
+        user = await User.create({
+            displayName: "User_" + Math.floor(Math.random() * 10000),
+            points: 5
         });
-    } catch (err) {
-        console.error("OPEN ERROR:", err);
-        res.status(500).json({ error: err.message });
     }
-};
 
-/*
-  POST /bin/:binId/close
-*/
-export const closeBin = async (req, res) => {
-    try {
-        const { binId } = req.params;
+    res.json({ bin, user });
+}
 
-        const bin = await Bin.findOneAndUpdate(
-            { binId },
-            {
-                command: "CLOSE",
-                status: "CLOSED",
-                lastActionAt: new Date(),
-            },
-            { new: true, upsert: true }
-        );
+export async function openBin(req, res) {
+    const { binId } = req.params;
+    const { userId } = req.query;
 
-        res.json({
-            ok: true,
-            command: bin.command,
+    const bin = await Bin.findOneAndUpdate(
+        { binId },
+        { status: "OPEN", command: "OPEN", lastActionAt: new Date() },
+        { new: true }
+    );
+
+    if (userId) {
+        await User.findByIdAndUpdate(userId, {
+            $inc: { points: 5 }
         });
-    } catch (err) {
-        console.error("CLOSE ERROR:", err);
-        res.status(500).json({ error: err.message });
     }
-};
+
+    res.json({ ok: true });
+}
+
+export async function closeBin(req, res) {
+    const { binId } = req.params;
+    const { userId } = req.query;
+
+    const bin = await Bin.findOneAndUpdate(
+        { binId },
+        { status: "CLOSED", command: "CLOSE", lastActionAt: new Date() },
+        { new: true }
+    );
+
+    res.json({ ok: true });
+}
